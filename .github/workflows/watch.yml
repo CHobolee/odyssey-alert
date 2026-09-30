@@ -1,6 +1,7 @@
 name: odyssey-alert
 # GitHub 예약 실행은 몇 시간씩 밀리기도 해서, 잡 하나가 약 5시간 40분 동안
-# 60초 간격으로 계속 확인한다. 다음 잡은 concurrency 로 대기하다가 바로 이어받는다.
+# 60초 간격으로 계속 확인한다. 끝날 때 스스로 다음 실행을 켜서(릴레이) 끊기지 않는다.
+# 매시 예약(cron)은 릴레이가 끊겼을 때를 위한 보험. concurrency 로 항상 1개만 돈다.
 on:
   schedule:
     - cron: "7 * * * *"
@@ -12,6 +13,7 @@ on:
         default: false
 permissions:
   contents: write
+  actions: write
 concurrency:
   group: odyssey-alert-${{ inputs.test && 'test' || 'watch' }}
   cancel-in-progress: false
@@ -41,3 +43,8 @@ jobs:
           git config user.name "odyssey-alert"; git config user.email "actions@github.com"
           git add state.json
           git diff --cached --quiet || (git commit -m "state" && git pull --rebase && git push)
+      - name: 다음 실행 켜기 (릴레이)
+        if: ${{ always() && !inputs.test }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run watch.yml --ref main -R ${{ github.repository }}
