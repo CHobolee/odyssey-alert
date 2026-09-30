@@ -74,7 +74,7 @@ def get_json(path, params):
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             return json.loads(r.read().decode("utf-8"))
-    except HTTPBlocked as e:
+    except urllib.error.HTTPError as e:
         raise HTTPBlocked(e.code)
 
 
