@@ -48,11 +48,34 @@ def log(msg):
     print(f"[{datetime.now(KST):%Y-%m-%d %H:%M:%S} KST] {msg}", flush=True)
 
 
+try:
+    # CGV(Cloudflare)는 TLS 지문으로 봇을 막음 → 크롬 TLS 지문 흉내 (pip install curl_cffi)
+    from curl_cffi import requests as _cffi
+    _session = _cffi.Session(impersonate="chrome")
+except ImportError:
+    _session = None
+
+
+class HTTPBlocked(Exception):
+    def __init__(self, code):
+        super().__init__(f"HTTP {code}")
+        self.code = code
+
+
 def get_json(path, params):
+    url = f"{BASE}/{path}"
+    if _session is not None:
+        r = _session.get(url, params=params, headers={"Referer": HEADERS["Referer"]}, timeout=20)
+        if r.status_code != 200:
+            raise HTTPBlocked(r.status_code)
+        return r.json()
     qs = "&".join(f"{k}={v}" for k, v in params.items())
-    req = urllib.request.Request(f"{BASE}/{path}?{qs}", headers=HEADERS)  # urllib = HTTP/1.1
-    with urllib.request.urlopen(req, timeout=20) as r:
-        return json.loads(r.read().decode("utf-8"))
+    req = urllib.request.Request(f"{url}?{qs}", headers=HEADERS)
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except HTTPBlocked as e:
+        raise HTTPBlocked(e.code)
 
 
 def open_dates():
@@ -170,6 +193,7 @@ def main():
     ap.add_argument("--once", action="store_true")
     ap.add_argument("--loop", type=int, metavar="SEC")
     ap.add_argument("--test", action="store_true")
+    ap.add_argument("--minutes", type=int, default=0, help="--loop를 이 시간(분) 뒤 종료")
     a = ap.parse_args()
 
     if a.test:
@@ -177,12 +201,13 @@ def main():
         return
     if a.loop:
         errors = 0
-        while True:
+        end = time.time() + a.minutes * 60 if a.minutes else None
+        while end is None or time.time() < end:
             try:
                 if check_once():
                     return
                 errors = 0
-            except urllib.error.HTTPError as e:
+            except HTTPBlocked as e:
                 errors += 1
                 log(f"HTTP {e.code} (연속 {errors}회) — 403이면 IP 차단, 429면 요청 과다")
                 if errors == 10:
@@ -194,7 +219,7 @@ def main():
     else:
         try:
             check_once()
-        except urllib.error.HTTPError as e:
+        except HTTPBlocked as e:
             log(f"HTTP {e.code}")
             sys.exit(1)
 
