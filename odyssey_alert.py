@@ -87,6 +87,44 @@ def open_dates():
     return {x["scnYmd"] for x in (d.get("data") or [])}
 
 
+# 취소표 감시: 이 회차들의 잔여석이 늘면(=취소표) 알림. {"YYYYMMDD": ["HHMM", ...]}
+CANCEL_WATCH = {
+    "20261009": ["1800", "2130"],
+    "20261010": ["1800", "2130"],
+    "20261011": ["1800", "2130"],
+}
+_seat_base = {}      # (ymd, hhmm) -> 마지막으로 본 잔여석
+_cancel_idx = [0]
+
+
+def cancel_watch_tick():
+    """1분에 날짜 1개씩 돌아가며 확인 (요청 1건)."""
+    today = datetime.now(KST).strftime("%Y%m%d")
+    dates = [d for d in sorted(CANCEL_WATCH) if d >= today]
+    if not dates:
+        return
+    ymd = dates[_cancel_idx[0] % len(dates)]
+    _cancel_idx[0] += 1
+    time.sleep(1.5)
+    d = get_json("searchMovScnInfo", {"coCd": "A420", "siteNo": SITE_NO, "scnYmd": ymd, "rtctlScopCd": "01"})
+    for r in d.get("data") or []:
+        t = r.get("scnsrtTm") or ""
+        if t not in CANCEL_WATCH[ymd] or MOV_KEYWORD not in (r.get("prodNm") or ""):
+            continue
+        if HALL_FILTER and not any(k in (r.get("expoScnsNm") or "") for k in HALL_FILTER):
+            continue
+        try:
+            free = int(r.get("frSeatCnt"))
+        except (TypeError, ValueError):
+            continue
+        key = (ymd, t)
+        prev = _seat_base.get(key)
+        _seat_base[key] = free
+        if prev is not None and free > prev:
+            notify(f"🎟 취소표! {label(ymd)} {t[:2]}:{t[2:]} 용아맥",
+                   f"잔여석 {prev} → {free} (+{free - prev})\n지금 예매 화면에서 H·I열 중앙(14~31번) 확인하세요!")
+
+
 # IMAX 회차 없이 일반관만 잡힌 날짜는 매분 다시 조회하지 않고 10분마다만 재확인 (요청 수 절약)
 _recheck_after = {}
 RECHECK_SEC = 600
@@ -188,6 +226,8 @@ def check_once():
                    f"{SITE_NAME}\n" + "\n".join(lines) + "\n명당: H·I열 중앙(약 14~31번)")
         state["notified"][ymd] = datetime.now(KST).isoformat(timespec="seconds")
         save_state(state)
+    if CANCEL_WATCH:
+        cancel_watch_tick()
     if first_run:
         state["baseline_done"] = datetime.now(KST).isoformat(timespec="seconds")
         save_state(state)
