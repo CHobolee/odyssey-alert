@@ -264,7 +264,7 @@ def main():
                 if errors >= 5:
                     # 이 서버 IP가 막힌 것. 종료하면 워크플로가 다른 서버로 다음 실행을 켬.
                     log("이 서버가 CGV에 막힌 것 같아 종료 → 다른 서버로 교대")
-                    if successes == 0 and int(os.environ.get("BLOCKED_STREAK") or 0) >= 3:
+                    if successes == 0 and int(os.environ.get("BLOCKED_STREAK") or 0) == 3:
                         notify("⚠️ 오디세이 알리미 오류", "여러 서버에서 연속으로 CGV에 막혔어요. 확인이 필요해요.")
                     sys.exit(3 if successes == 0 else 0)
             except Exception as e:
