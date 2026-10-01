@@ -23,7 +23,7 @@ KST = timezone(timedelta(hours=9))
 
 SITE_NO = "0013"            # CGV 용산아이파크몰
 SITE_NAME = "CGV 용산아이파크몰"
-MOV_NO = ""                 # 비워두면 이름으로만 매칭
+MOV_NO = "30001323"         # 오디세이 (CGV 영화 코드)
 MOV_KEYWORD = "오디세이"
 MOVIE_LABEL = "오디세이 용아맥"
 # 특정 날짜만 보려면 {"20261010": "10/10(토)"} 처럼. None이면 새로 열리는 모든 날짜.
@@ -79,9 +79,17 @@ def get_json(path, params):
 
 
 def open_dates():
-    """용산에 상영 일정이 잡힌 날짜 목록 (요청 1건)"""
-    d = get_json("searchSiteScnscYmdListBySite", {"coCd": "A420", "siteNo": SITE_NO})
+    """용산에서 이 영화가 상영되는 날짜 목록 (요청 1건). 영화 코드가 없으면 극장 전체 날짜."""
+    if MOV_NO:
+        d = get_json("searchSiteScnscYmdListByMov", {"coCd": "A420", "siteNo": SITE_NO, "movNo": MOV_NO})
+    else:
+        d = get_json("searchSiteScnscYmdListBySite", {"coCd": "A420", "siteNo": SITE_NO})
     return {x["scnYmd"] for x in (d.get("data") or [])}
+
+
+# IMAX 회차 없이 일반관만 잡힌 날짜는 매분 다시 조회하지 않고 10분마다만 재확인 (요청 수 절약)
+_recheck_after = {}
+RECHECK_SEC = 600
 
 
 def endgame_showings(ymd):
@@ -165,11 +173,12 @@ def check_once():
     if TARGET_DATES:
         dates = [d for d in dates if d in TARGET_DATES]
     for ymd in dates:
-        if ymd in state["notified"]:
+        if ymd in state["notified"] or time.time() < _recheck_after.get(ymd, 0):
             continue
+        time.sleep(1.5)
         shows = endgame_showings(ymd)
-        time.sleep(0.8)
         if not shows:
+            _recheck_after[ymd] = time.time() + RECHECK_SEC
             continue
         if first_run:
             log(f"{label(ymd)}: 이미 열려 있음 → 기준선 저장 ({len(shows)}회차)")
@@ -201,21 +210,27 @@ def main():
         return
     if a.loop:
         errors = 0
+        successes = 0
         end = time.time() + a.minutes * 60 if a.minutes else None
         while end is None or time.time() < end:
             try:
                 if check_once():
                     return
                 errors = 0
+                successes += 1
             except HTTPBlocked as e:
                 errors += 1
                 log(f"HTTP {e.code} (연속 {errors}회) — 403이면 IP 차단, 429면 요청 과다")
-                if errors == 10:
-                    notify("⚠️ 오디세이 알리미 오류", f"CGV 응답 HTTP {e.code}가 계속됩니다. 확인이 필요해요.")
+                if errors >= 5:
+                    # 이 서버 IP가 막힌 것. 종료하면 워크플로가 다른 서버로 다음 실행을 켬.
+                    log("이 서버가 CGV에 막힌 것 같아 종료 → 다른 서버로 교대")
+                    if successes == 0 and int(os.environ.get("BLOCKED_STREAK") or 0) >= 3:
+                        notify("⚠️ 오디세이 알리미 오류", "여러 서버에서 연속으로 CGV에 막혔어요. 확인이 필요해요.")
+                    sys.exit(3 if successes == 0 else 0)
             except Exception as e:
                 errors += 1
                 log(f"오류: {e}")
-            time.sleep(max(30, a.loop) if errors < 3 else 300)
+            time.sleep(max(30, a.loop) if errors == 0 else 30)
     else:
         try:
             check_once()

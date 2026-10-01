@@ -11,6 +11,10 @@ on:
         description: "알림 테스트만 보내기"
         type: boolean
         default: false
+      blocked:
+        description: "(자동) 연속으로 CGV에 막힌 서버 수"
+        type: string
+        default: "0"
 permissions:
   contents: write
   actions: write
@@ -35,8 +39,16 @@ jobs:
         if: ${{ !inputs.test }}
         run: pip install -q curl_cffi
       - name: 약 5시간 40분 동안 60초 간격으로 확인
+        id: watch
         if: ${{ !inputs.test }}
-        run: python3 odyssey_alert.py --loop 60 --minutes 335
+        env:
+          BLOCKED_STREAK: ${{ inputs.blocked || '0' }}
+        run: |
+          set +e
+          python3 odyssey_alert.py --loop 60 --minutes 335
+          code=$?
+          if [ $code -eq 3 ]; then echo "blocked=$(( ${BLOCKED_STREAK:-0} + 1 ))" >> $GITHUB_OUTPUT; else echo "blocked=0" >> $GITHUB_OUTPUT; fi
+          [ $code -eq 0 ] || [ $code -eq 3 ]
       - name: 알림 보낸 날짜 저장
         if: ${{ always() && !inputs.test }}
         run: |
@@ -47,4 +59,8 @@ jobs:
         if: ${{ always() && !inputs.test }}
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run watch.yml --ref main -R ${{ github.repository }}
+        run: |
+          b="${{ steps.watch.outputs.blocked || '0' }}"
+          # 막혀서 교대하는 경우 너무 빨리 반복하지 않도록 조금 쉼 (계속 막히면 점점 길게)
+          [ "$b" -gt 0 ] && sleep $(( b > 5 ? 600 : b * 60 ))
+          gh workflow run watch.yml --ref main -R ${{ github.repository }} -f blocked="$b"
