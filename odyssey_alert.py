@@ -59,7 +59,7 @@ except ImportError:
 #  - 한 번 통과한 연결은 계속 통과, 막힌 연결은 계속 막힘 → 막히면 새 연결로 다시 시도
 #  - chrome136, firefox 지문은 항상 막힘. 홈페이지를 먼저 여는 것은 도움 안 됨
 PROFILES = ["chrome", "safari", "safari18_0", "safari17_0"]
-MAX_TRIES = 3
+MAX_TRIES = 2
 MIN_GAP = 12          # CGV는 같은 IP의 연달은 요청을 막음(속도 제한) → 모든 요청 사이 최소 간격(초)
 _last_req = [0.0]
 
@@ -177,7 +177,7 @@ def cancel_watch_tick():
         prev = _seat_base.get(key)
         _seat_base[key] = free
         if prev is not None and free > prev:
-            notify(f"🎟 취소표! {label(ymd)} {t[:2]}:{t[2:]} 용아맥",
+            notify(f"🎟 취소표! {label(ymd)} {t[:2]}:{t[2:]} 용아맥 (잔여 {free})",
                    f"잔여석 {prev} → {free} (+{free - prev})\n지금 예매 화면에서 H·I열 중앙(14~31번) 확인하세요!")
 
 
@@ -212,7 +212,30 @@ def _post(url, body, headers=None):
     urllib.request.urlopen(req, timeout=15).read()
 
 
-def notify(title, text, url="https://cgv.co.kr/cnm/movieBook/cinema"):
+def _already_sent(title):
+    """다른 서버가 같은 알림을 이미 보냈는지 ntfy 기록(최근 6시간)에서 확인."""
+    topic = os.environ.get("NTFY_TOPIC")
+    if not topic:
+        return False
+    try:
+        import random
+        time.sleep(random.uniform(0, 4))      # 동시에 발견했을 때 겹치지 않게
+        with urllib.request.urlopen(f"https://ntfy.sh/{topic}/json?poll=1&since=6h", timeout=10) as r:
+            for line in r.read().decode("utf-8").splitlines():
+                try:
+                    if json.loads(line).get("title") == title:
+                        return True
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return False
+
+
+def notify(title, text, url="https://cgv.co.kr/cnm/movieBook/cinema", dedupe=True):
+    if dedupe and _already_sent(title):
+        log(f"다른 서버가 이미 보낸 알림이라 생략: {title}")
+        return
     sent = False
     topic = os.environ.get("NTFY_TOPIC")
     if topic:
@@ -304,32 +327,36 @@ def main():
     a = ap.parse_args()
 
     if a.test:
-        notify("✅ 알림 테스트", f"{SITE_NAME} 오디세이 용아맥 감시 알림이 정상 작동합니다.")
+        notify("✅ 알림 테스트", f"{SITE_NAME} 오디세이 용아맥 감시 알림이 정상 작동합니다.", dedupe=False)
         return
     if a.loop:
-        # GitHub 서버(IP)마다 CGV 통과율이 크게 다름(진단: 좋은 서버 ~80%, 나쁜 서버 0~25%).
-        # 시작할 때 품질을 재서 나쁘면 바로 교대하고, 돌다가 나빠져도 교대.
-        if not probe_runner():
-            sys.exit(3)
-        recent = []          # 최근 회차 성공 여부 (최대 10개)
-        successes = 0
+        # GitHub 서버(IP)마다, 시간마다 CGV 통과율이 크게 달라짐 → 여러 서버(SLOT)가 동시에
+        # 엇갈린 시각에 확인. 이 서버가 10분 동안 한 번도 통과 못 하면 새 서버로 교대.
+        slot = int(os.environ.get("SLOT") or 1)
+        slots = int(os.environ.get("SLOTS") or 1)
+        successes = blocked = 0
+        last_ok = time.time()
         end = time.time() + a.minutes * 60 if a.minutes else None
         while end is None or time.time() < end:
-            ok = False
+            # 매 분의 (slot-1)*60/slots 초에 맞춰 확인 → 서버들이 분 안에서 고르게 퍼짐
+            now = time.time()
+            target = (now // 60) * 60 + (slot - 1) * 60 / slots
+            if target <= now + 1:
+                target += 60
+            time.sleep(target - now)
             try:
                 if check_once():
                     return
-                ok = True
                 successes += 1
+                last_ok = time.time()
             except HTTPBlocked as e:
-                log(f"이번 회차 막힘 (HTTP {e.code})")
+                blocked += 1
+                log(f"이번 회차 막힘 (HTTP {e.code}) — 성공 {successes} / 막힘 {blocked}")
+                if time.time() - last_ok > 10 * 60:
+                    log("10분 동안 통과 0회 → 새 서버로 교대")
+                    sys.exit(3 if successes == 0 else 0)
             except Exception as e:
                 log(f"오류: {e}")
-            recent = (recent + [ok])[-10:]
-            if len(recent) >= 5 and sum(recent) / len(recent) < 0.6:
-                log(f"최근 {len(recent)}회 중 {sum(recent)}회만 통과 → 서버가 나빠짐, 교대")
-                sys.exit(0)
-            time.sleep(35 if ok else 15)   # 요청 간격(12초)과 합쳐 약 1분 주기
     else:
         try:
             check_once()

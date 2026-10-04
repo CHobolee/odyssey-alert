@@ -1,7 +1,8 @@
 name: odyssey-alert
-# GitHub 예약 실행은 몇 시간씩 밀리기도 해서, 잡 하나가 약 5시간 40분 동안
-# 60초 간격으로 계속 확인한다. 끝날 때 스스로 다음 실행을 켜서(릴레이) 끊기지 않는다.
-# 매시 예약(cron)은 릴레이가 끊겼을 때를 위한 보험. concurrency 로 항상 1개만 돈다.
+# CGV는 GitHub 서버(IP)마다·시간마다 통과율이 크게 달라진다. 그래서 서버 4대(slot 1~4)가
+# 동시에, 1분 안에서 15초씩 엇갈려 확인한다. 각 서버는 약 5시간 40분 돌고 끝날 때 스스로
+# 다음 실행을 켠다(릴레이). 10분 동안 한 번도 통과 못 한 서버는 새 서버로 교대한다.
+# 매시 예약(cron)은 릴레이가 끊겼을 때 4대를 다시 켜는 보험.
 on:
   schedule:
     - cron: "7 * * * *"
@@ -11,70 +12,85 @@ on:
         description: "알림 테스트만 보내기"
         type: boolean
         default: false
+      slot:
+        description: "(자동) 서버 번호 1~4. 비우면 4대 모두 켬"
+        type: string
+        default: ""
       blocked:
-        description: "(자동) 연속으로 CGV에 막힌 서버 수"
+        description: "(자동) 연속으로 막힌 서버 수"
         type: string
         default: "0"
 permissions:
   contents: write
   actions: write
-concurrency:
-  group: odyssey-alert-${{ inputs.test && 'test' || 'watch' }}
-  cancel-in-progress: false
+env:
+  SLOTS: "4"
 jobs:
+  # 예약 실행이거나 slot 없이 수동 실행하면 4대를 모두 켠다
+  kick:
+    if: ${{ !inputs.test && !inputs.slot }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for s in 1 2 3 4; do gh workflow run watch.yml --ref main -R ${{ github.repository }} -f slot=$s; sleep 2; done
+  test:
+    if: ${{ inputs.test }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 odyssey_alert.py --test
   check:
+    if: ${{ !inputs.test && inputs.slot }}
     runs-on: ubuntu-latest
     timeout-minutes: 355
+    concurrency:
+      group: odyssey-alert-slot-${{ inputs.slot }}
+      cancel-in-progress: false
     env:
       NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
       TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      SLOT: ${{ inputs.slot }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
-      - name: 알림 테스트
-        if: ${{ inputs.test }}
-        run: python3 odyssey_alert.py --test
-      - name: curl_cffi 설치 (크롬 TLS 지문)
-        if: ${{ !inputs.test }}
+      - name: curl_cffi 설치 (브라우저 지문)
         run: pip install -q -U curl_cffi
-      - name: 약 5시간 40분 동안 60초 간격으로 확인
+      - name: 감시 (약 5시간 40분, 1분 주기)
         id: watch
-        if: ${{ !inputs.test }}
         env:
           BLOCKED_STREAK: ${{ inputs.blocked || '0' }}
-          GH_TOKEN: ${{ github.token }}
         run: |
           set +e
-          # 10분마다 최근 로그를 status 브랜치의 status.txt 로 올림 (밖에서 상태 확인용)
+          # 5분마다 최근 로그를 status 브랜치의 status-<slot>.txt 로 올림 (밖에서 상태 확인용)
           push_status() {
-            { echo "run #$GITHUB_RUN_NUMBER  갱신 $(TZ=Asia/Seoul date '+%m-%d %H:%M:%S') KST"; echo "성공 $(grep -c '확인 완료' watch.log) / 막힘 $(grep -c '이번 회차 막힘' watch.log)"; tail -n 25 watch.log; } > status.txt
-            sha=$(gh api "repos/$GITHUB_REPOSITORY/contents/status.txt?ref=status" --jq .sha 2>/dev/null)
-            gh api -X PUT "repos/$GITHUB_REPOSITORY/contents/status.txt" -f message="status" -f branch=status -f content="$(base64 -w0 status.txt)" ${sha:+-f sha=$sha} >/dev/null 2>&1
+            { echo "slot $SLOT · run #$GITHUB_RUN_NUMBER · 갱신 $(TZ=Asia/Seoul date '+%m-%d %H:%M:%S') KST"; echo "성공 $(grep -c '확인 완료' watch.log) / 막힘 $(grep -c '이번 회차 막힘' watch.log)"; tail -n 12 watch.log; } > st.txt
+            sha=$(gh api "repos/$GITHUB_REPOSITORY/contents/status-$SLOT.txt?ref=status" --jq .sha 2>/dev/null)
+            gh api -X PUT "repos/$GITHUB_REPOSITORY/contents/status-$SLOT.txt" -f message="status $SLOT" -f branch=status -f content="$(base64 -w0 st.txt)" ${sha:+-f sha=$sha} >/dev/null 2>&1
           }
-          ( while sleep 600; do push_status; done ) &
+          : > watch.log
+          ( while sleep 300; do push_status; done ) &
           bg=$!
           python3 -u odyssey_alert.py --loop 60 --minutes 335 2>&1 | tee watch.log
           code=${PIPESTATUS[0]}
           kill $bg 2>/dev/null; push_status
           if [ $code -eq 3 ]; then echo "blocked=$(( ${BLOCKED_STREAK:-0} + 1 ))" >> $GITHUB_OUTPUT; else echo "blocked=0" >> $GITHUB_OUTPUT; fi
-          # 나쁜 서버만 30번 연속이면(약 30분) 한 번만 알림
-          if [ $code -eq 3 ] && [ "${BLOCKED_STREAK:-0}" = "30" ] && [ -n "$NTFY_TOPIC" ]; then
-            curl -s -H "Title: Odyssey alert problem" -H "Priority: high" -d "GitHub 서버 30대가 연속으로 CGV에 막혔어요. 확인이 필요해요." "https://ntfy.sh/$NTFY_TOPIC" >/dev/null || true
-          fi
           [ $code -eq 0 ] || [ $code -eq 3 ]
       - name: 알림 보낸 날짜 저장
-        if: ${{ always() && !inputs.test }}
+        if: ${{ always() }}
         run: |
           git config user.name "odyssey-alert"; git config user.email "actions@github.com"
           git add state.json
-          git diff --cached --quiet || (git commit -m "state" && git pull --rebase && git push)
+          git diff --cached --quiet || (git commit -m "state" && git pull --rebase -X theirs && git push) || true
       - name: 다음 실행 켜기 (릴레이)
-        if: ${{ always() && !inputs.test }}
-        env:
-          GH_TOKEN: ${{ github.token }}
+        if: ${{ always() }}
         run: |
           b="${{ steps.watch.outputs.blocked || '0' }}"
-          # 나쁜 서버라 교대하는 경우: 바로 다음 서버로 (계속 나쁘면 조금씩 쉼)
-          [ "$b" -gt 10 ] && sleep 30
-          gh workflow run watch.yml --ref main -R ${{ github.repository }} -f blocked="$b"
+          gh workflow run watch.yml --ref main -R ${{ github.repository }} -f slot="$SLOT" -f blocked="$b"
