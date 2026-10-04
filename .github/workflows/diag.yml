@@ -1,0 +1,15 @@
+name: diag
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install -q -U curl_cffi && python3 diag.py
+      - run: |
+          git config user.name "odyssey-alert"; git config user.email "actions@github.com"
+          git add diag.txt && git commit -m "diag $(date -u +%H:%M)" && git pull --rebase && git push
