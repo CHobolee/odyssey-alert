@@ -54,10 +54,13 @@ try:
 except ImportError:
     _cffi = None
 
-# 통과되는 지문은 CGV 쪽 규칙에 따라 바뀜(2026-10 기준 GitHub에서는 safari만 통과).
-# 막히면 다음 지문으로 넘어가고, 통과한 지문을 계속 씀.
-PROFILES = ["safari", "safari18_0", "chrome", "firefox", "safari18_0_ios", "chrome131_android"]
-_prof = {"i": 0, "session": None}
+# 2026-10-04 GitHub 러너 진단 결과:
+#  - CGV(Cloudflare) 차단은 "연결(세션)마다" 확률적으로 결정됨 (chrome/safari 지문은 약 40~60% 통과)
+#  - 한 번 통과한 연결은 계속 통과, 막힌 연결은 계속 막힘 → 막히면 새 연결로 다시 시도
+#  - chrome136, firefox 지문은 항상 막힘. 홈페이지를 먼저 여는 것은 도움 안 됨
+PROFILES = ["chrome", "safari", "safari18_0", "safari17_0"]
+MAX_TRIES = 8
+_prof = {"i": 0, "session": None, "name": None}
 
 
 class HTTPBlocked(Exception):
@@ -66,37 +69,31 @@ class HTTPBlocked(Exception):
         self.code = code
 
 
-def _new_session(name):
-    s = _cffi.Session(impersonate=name)
-    try:  # 홈을 먼저 열어 Cloudflare 쿠키(__cf_bm)를 받아둠
-        s.get("https://cgv.co.kr/", timeout=20)
-    except Exception:
-        pass
-    return s
-
-
 def get_json(path, params):
     url = f"{BASE}/{path}"
     if _cffi is not None:
-        last = 0
-        for _ in range(len(PROFILES)):
-            name = PROFILES[_prof["i"] % len(PROFILES)]
+        last, tried = 0, []
+        for _ in range(MAX_TRIES):
             if _prof["session"] is None:
-                _prof["session"] = _new_session(name)
+                _prof["name"] = PROFILES[_prof["i"] % len(PROFILES)]
+                _prof["i"] += 1
+                _prof["session"] = _cffi.Session(impersonate=_prof["name"])
             try:
                 r = _prof["session"].get(url, params=params, headers={"Referer": HEADERS["Referer"]}, timeout=20)
                 last = r.status_code
                 if r.status_code == 200:
+                    if tried:
+                        log(f"새 연결({_prof['name']})로 통과 — 앞서 막힌 연결: {', '.join(tried)}")
                     return r.json()
             except Exception as e:
                 last = 0
-                log(f"요청 오류({name}): {str(e)[:80]}")
+                log(f"요청 오류({_prof['name']}): {str(e)[:80]}")
+            tried.append(f"{_prof['name']}={last}")
+            _prof["session"] = None      # 막힌 연결은 버림
             if last == 429:
                 raise HTTPBlocked(429)
-            log(f"지문 {name} → HTTP {last}, 다음 지문으로 전환")
-            _prof["i"] += 1
-            _prof["session"] = None
-            time.sleep(2)
+            time.sleep(1.5)
+        log(f"연결 {MAX_TRIES}개 모두 막힘: {', '.join(tried)}")
         raise HTTPBlocked(last or 403)
     qs = "&".join(f"{k}={v}" for k, v in params.items())
     req = urllib.request.Request(f"{url}?{qs}", headers=HEADERS)
@@ -290,7 +287,7 @@ def main():
             except HTTPBlocked as e:
                 errors += 1
                 log(f"HTTP {e.code} (연속 {errors}회) — 403이면 IP 차단, 429면 요청 과다")
-                if errors >= 5:
+                if errors >= 3:
                     # 이 서버 IP가 막힌 것. 종료하면 워크플로가 다른 서버로 다음 실행을 켬.
                     log("이 서버가 CGV에 막힌 것 같아 종료 → 다른 서버로 교대")
                     if successes == 0 and int(os.environ.get("BLOCKED_STREAK") or 0) == 3:

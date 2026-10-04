@@ -62,5 +62,5 @@ jobs:
         run: |
           b="${{ steps.watch.outputs.blocked || '0' }}"
           # 막혀서 교대하는 경우 너무 빨리 반복하지 않도록 조금 쉼 (계속 막히면 점점 길게)
-          [ "$b" -gt 0 ] && sleep $(( b > 5 ? 600 : b * 60 ))
+          [ "$b" -gt 0 ] && sleep $(( b > 6 ? 120 : b * 20 ))
           gh workflow run watch.yml --ref main -R ${{ github.repository }} -f blocked="$b"
