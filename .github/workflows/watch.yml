@@ -48,6 +48,10 @@ jobs:
           python3 odyssey_alert.py --loop 60 --minutes 335
           code=$?
           if [ $code -eq 3 ]; then echo "blocked=$(( ${BLOCKED_STREAK:-0} + 1 ))" >> $GITHUB_OUTPUT; else echo "blocked=0" >> $GITHUB_OUTPUT; fi
+          # 나쁜 서버만 30번 연속이면(약 30분) 한 번만 알림
+          if [ $code -eq 3 ] && [ "${BLOCKED_STREAK:-0}" = "30" ] && [ -n "$NTFY_TOPIC" ]; then
+            curl -s -H "Title: Odyssey alert problem" -H "Priority: high" -d "GitHub 서버 30대가 연속으로 CGV에 막혔어요. 확인이 필요해요." "https://ntfy.sh/$NTFY_TOPIC" >/dev/null || true
+          fi
           [ $code -eq 0 ] || [ $code -eq 3 ]
       - name: 알림 보낸 날짜 저장
         if: ${{ always() && !inputs.test }}
@@ -61,6 +65,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           b="${{ steps.watch.outputs.blocked || '0' }}"
-          # 막혀서 교대하는 경우 너무 빨리 반복하지 않도록 조금 쉼 (계속 막히면 점점 길게)
-          [ "$b" -gt 0 ] && sleep $(( b > 6 ? 120 : b * 20 ))
+          # 나쁜 서버라 교대하는 경우: 바로 다음 서버로 (계속 나쁘면 조금씩 쉼)
+          [ "$b" -gt 10 ] && sleep 30
           gh workflow run watch.yml --ref main -R ${{ github.repository }} -f blocked="$b"

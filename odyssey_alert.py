@@ -104,6 +104,28 @@ def get_json(path, params):
         raise HTTPBlocked(e.code)
 
 
+def probe_runner(n=8, need=3):
+    """이 서버(IP)가 CGV에 얼마나 통과되는지 빠르게 측정. GitHub 서버마다 통과율이 크게 다름."""
+    if _cffi is None:
+        return True
+    url = f"{BASE}/searchSiteScnscYmdListByMov"
+    seq = ""
+    for i in range(n):
+        try:
+            r = _cffi.Session(impersonate=PROFILES[i % 2]).get(
+                url, params={"coCd": "A420", "siteNo": SITE_NO, "movNo": MOV_NO or "30001323"},
+                headers={"Referer": HEADERS["Referer"]}, timeout=15)
+            seq += "O" if r.status_code == 200 else "x"
+        except Exception:
+            seq += "E"
+        if seq.count("O") >= need:
+            break
+        time.sleep(2)
+    ok = seq.count("O") >= need
+    log(f"서버 품질 측정: {seq} → {'좋은 서버, 감시 시작' if ok else '나쁜 서버, 교대'}")
+    return ok
+
+
 def open_dates():
     """용산에서 이 영화가 상영되는 날짜 목록 (요청 1건). 영화 코드가 없으면 극장 전체 날짜."""
     if MOV_NO:
@@ -278,31 +300,29 @@ def main():
         notify("✅ 알림 테스트", f"{SITE_NAME} 오디세이 용아맥 감시 알림이 정상 작동합니다.")
         return
     if a.loop:
-        # GitHub 서버에서는 CGV가 요청을 "가끔만" 통과시킴 → 막혀도 계속 시도하고,
-        # 15분 동안 한 번도 못 통과하면 그때 다른 서버로 교대.
-        errors = 0
+        # GitHub 서버(IP)마다 CGV 통과율이 크게 다름(진단: 좋은 서버 ~80%, 나쁜 서버 0~25%).
+        # 시작할 때 품질을 재서 나쁘면 바로 교대하고, 돌다가 나빠져도 교대.
+        if not probe_runner():
+            sys.exit(3)
+        recent = []          # 최근 회차 성공 여부 (최대 10개)
         successes = 0
-        last_ok = time.time()
         end = time.time() + a.minutes * 60 if a.minutes else None
         while end is None or time.time() < end:
+            ok = False
             try:
                 if check_once():
                     return
-                errors = 0
+                ok = True
                 successes += 1
-                last_ok = time.time()
             except HTTPBlocked as e:
-                errors += 1
-                log(f"HTTP {e.code} (연속 {errors}회, 이번 실행 성공 {successes}회)")
-                if time.time() - last_ok > 15 * 60:
-                    log("15분 동안 한 번도 통과 못 함 → 다른 서버로 교대")
-                    if successes == 0 and int(os.environ.get("BLOCKED_STREAK") or 0) == 3:
-                        notify("⚠️ 오디세이 알리미 오류", "1시간 가까이 CGV 조회가 한 번도 안 됐어요. 확인이 필요해요.")
-                    sys.exit(3 if successes == 0 else 0)
+                log(f"이번 회차 막힘 (HTTP {e.code})")
             except Exception as e:
-                errors += 1
                 log(f"오류: {e}")
-            time.sleep(max(30, a.loop) if errors == 0 else 40)
+            recent = (recent + [ok])[-10:]
+            if len(recent) >= 5 and sum(recent) / len(recent) < 0.6:
+                log(f"최근 {len(recent)}회 중 {sum(recent)}회만 통과 → 서버가 나빠짐, 교대")
+                sys.exit(0)
+            time.sleep(max(30, a.loop) if ok else 20)
     else:
         try:
             check_once()
