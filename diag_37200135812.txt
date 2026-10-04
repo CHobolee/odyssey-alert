@@ -1,0 +1,46 @@
+runner_ip 20.161.60.20
+--- round 1
+safari           warm=False extra=False -> 403 CGV차단 / again 200
+safari           warm=True  extra=False home=403 -> 403 CGV차단 / again 200
+safari18_0       warm=False extra=False -> 403 CGV차단 / again 403
+safari18_0       warm=True  extra=False home=403 -> 403 CGV차단 / again 403
+safari17_0       warm=False extra=False -> 403 CGV차단 / again 403
+safari17_0       warm=True  extra=False home=403 -> 403 CGV차단 / again 200
+chrome           warm=False extra=False -> 403 CGV차단 / again 403
+chrome           warm=True  extra=False home=200 -> 200 JSON / again 200
+chrome136        warm=False extra=False -> 403 CGV차단 / again 403
+chrome136        warm=True  extra=False home=403 -> 403 CGV차단 / again 403
+firefox135       warm=False extra=False -> 403 CGV차단 / again 403
+firefox135       warm=True  extra=False home=403 -> 403 CGV차단 / again 403
+safari           warm=False extra=True  -> 403 CGV차단 / again 403
+chrome           warm=False extra=True  -> 403 CGV차단 / again 200
+--- round 2
+safari           warm=False extra=False -> 200 JSON / again 200
+safari           warm=True  extra=False home=403 -> 403 CGV차단 / again 200
+safari18_0       warm=False extra=False -> 200 JSON / again 200
+safari18_0       warm=True  extra=False home=403 -> 403 CGV차단 / again 403
+safari17_0       warm=False extra=False -> 200 JSON / again 200
+safari17_0       warm=True  extra=False home=200 -> 200 JSON / again 200
+chrome           warm=False extra=False -> 403 CGV차단 / again 403
+chrome           warm=True  extra=False home=200 -> 200 JSON / again 200
+chrome136        warm=False extra=False -> 403 CGV차단 / again 403
+chrome136        warm=True  extra=False home=403 -> 403 CGV차단 / again 403
+firefox135       warm=False extra=False -> 403 CGV차단 / again 403
+firefox135       warm=True  extra=False home=403 -> 403 CGV차단 / again 403
+safari           warm=False extra=True  -> 403 CGV차단 / again 200
+chrome           warm=False extra=True  -> 403 CGV차단 / again 403
+--- round 3
+safari           warm=False extra=False -> 200 JSON / again 200
+safari           warm=True  extra=False home=403 -> 403 CGV차단 / again 403
+safari18_0       warm=False extra=False -> 403 CGV차단 / again 403
+safari18_0       warm=True  extra=False home=403 -> 403 CGV차단 / again 403
+safari17_0       warm=False extra=False -> 403 CGV차단 / again 403
+safari17_0       warm=True  extra=False home=200 -> 200 JSON / again 200
+chrome           warm=False extra=False -> 403 CGV차단 / again 403
+chrome           warm=True  extra=False home=200 -> 200 JSON / again 200
+chrome136        warm=False extra=False -> 403 CGV차단 / again 403
+chrome136        warm=True  extra=False home=403 -> 403 CGV차단 / again 403
+firefox135       warm=False extra=False -> 403 CGV차단 / again 403
+firefox135       warm=True  extra=False home=403 -> 403 CGV차단 / again 403
+safari           warm=False extra=True  -> 403 CGV차단 / again 200
+chrome           warm=False extra=True  -> 403 CGV차단 / again 200
