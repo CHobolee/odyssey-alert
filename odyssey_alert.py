@@ -59,7 +59,7 @@ except ImportError:
 #  - 한 번 통과한 연결은 계속 통과, 막힌 연결은 계속 막힘 → 막히면 새 연결로 다시 시도
 #  - chrome136, firefox 지문은 항상 막힘. 홈페이지를 먼저 여는 것은 도움 안 됨
 PROFILES = ["chrome", "safari", "safari18_0", "safari17_0"]
-MAX_TRIES = 8
+MAX_TRIES = 4
 _prof = {"i": 0, "session": None, "name": None}
 
 
@@ -92,7 +92,7 @@ def get_json(path, params):
             _prof["session"] = None      # 막힌 연결은 버림
             if last == 429:
                 raise HTTPBlocked(429)
-            time.sleep(1.5)
+            time.sleep(4)
         log(f"연결 {MAX_TRIES}개 모두 막힘: {', '.join(tried)}")
         raise HTTPBlocked(last or 403)
     qs = "&".join(f"{k}={v}" for k, v in params.items())
@@ -253,7 +253,10 @@ def check_once():
         state["notified"][ymd] = datetime.now(KST).isoformat(timespec="seconds")
         save_state(state)
     if CANCEL_WATCH:
-        cancel_watch_tick()
+        try:
+            cancel_watch_tick()
+        except HTTPBlocked:
+            log("취소표 확인은 이번 회차에 막힘 (다음 회차에 재시도)")
     if first_run:
         state["baseline_done"] = datetime.now(KST).isoformat(timespec="seconds")
         save_state(state)
@@ -275,8 +278,11 @@ def main():
         notify("✅ 알림 테스트", f"{SITE_NAME} 오디세이 용아맥 감시 알림이 정상 작동합니다.")
         return
     if a.loop:
+        # GitHub 서버에서는 CGV가 요청을 "가끔만" 통과시킴 → 막혀도 계속 시도하고,
+        # 15분 동안 한 번도 못 통과하면 그때 다른 서버로 교대.
         errors = 0
         successes = 0
+        last_ok = time.time()
         end = time.time() + a.minutes * 60 if a.minutes else None
         while end is None or time.time() < end:
             try:
@@ -284,19 +290,19 @@ def main():
                     return
                 errors = 0
                 successes += 1
+                last_ok = time.time()
             except HTTPBlocked as e:
                 errors += 1
-                log(f"HTTP {e.code} (연속 {errors}회) — 403이면 IP 차단, 429면 요청 과다")
-                if errors >= 3:
-                    # 이 서버 IP가 막힌 것. 종료하면 워크플로가 다른 서버로 다음 실행을 켬.
-                    log("이 서버가 CGV에 막힌 것 같아 종료 → 다른 서버로 교대")
+                log(f"HTTP {e.code} (연속 {errors}회, 이번 실행 성공 {successes}회)")
+                if time.time() - last_ok > 15 * 60:
+                    log("15분 동안 한 번도 통과 못 함 → 다른 서버로 교대")
                     if successes == 0 and int(os.environ.get("BLOCKED_STREAK") or 0) == 3:
-                        notify("⚠️ 오디세이 알리미 오류", "여러 서버에서 연속으로 CGV에 막혔어요. 확인이 필요해요.")
+                        notify("⚠️ 오디세이 알리미 오류", "1시간 가까이 CGV 조회가 한 번도 안 됐어요. 확인이 필요해요.")
                     sys.exit(3 if successes == 0 else 0)
             except Exception as e:
                 errors += 1
                 log(f"오류: {e}")
-            time.sleep(max(30, a.loop) if errors == 0 else 30)
+            time.sleep(max(30, a.loop) if errors == 0 else 40)
     else:
         try:
             check_once()
