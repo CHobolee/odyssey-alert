@@ -175,6 +175,7 @@ def cancel_watch_tick():
             continue
         key = (ymd, t)
         prev = _seat_base.get(key)
+        log(f"취소표 확인 OK: {label(ymd)} {t[:2]}:{t[2:]} 잔여 {free}")
         _seat_base[key] = free
         if prev is not None and free > prev:
             notify(f"🎟 취소표! {label(ymd)} {t[:2]}:{t[2:]} 용아맥 (잔여 {free})",
@@ -282,39 +283,59 @@ def label(ymd):
     return f"{d.month}/{d.day}({'월화수목금토일'[d.weekday()]})"
 
 
+_tick = [0]
+
+
 def check_once():
     state = load_state()
     first_run = "baseline_done" not in state
     today = datetime.now(KST).strftime("%Y%m%d")
+    _tick[0] += 1
+    # 회차·좌석 조회(searchMovScnInfo)는 GitHub에서 날짜 목록 조회 직후엔 거의 항상 막힘.
+    # 그래서 3번에 한 번은 취소표 확인을 "먼저" 해서 통과 기회를 줌.
+    cancel_first = bool(CANCEL_WATCH) and _tick[0] % 3 == 0
+    if cancel_first:
+        try:
+            cancel_watch_tick()
+        except HTTPBlocked:
+            log("취소표 확인 막힘 (먼저 시도)")
     dates = sorted(d for d in open_dates() if d >= today)
     if TARGET_DATES:
         dates = [d for d in dates if d in TARGET_DATES]
     for ymd in dates:
         if ymd in state["notified"] or time.time() < _recheck_after.get(ymd, 0):
             continue
-        shows = endgame_showings(ymd)
-        if not shows:
+        try:
+            shows = endgame_showings(ymd)
+        except HTTPBlocked:
+            shows = None          # 회차 조회가 막힘 → 날짜가 열린 사실만이라도 바로 알림
+        if shows is not None and not shows:
             _recheck_after[ymd] = time.time() + RECHECK_SEC
             continue
         if first_run:
-            log(f"{label(ymd)}: 이미 열려 있음 → 기준선 저장 ({len(shows)}회차)")
+            log(f"{label(ymd)}: 이미 열려 있음 → 기준선 저장")
+        elif shows is None:
+            notify(f"🚨 {MOVIE_LABEL} {label(ymd)} 예매 오픈!",
+                   f"{SITE_NAME}에 오디세이 {label(ymd)} 일정이 새로 열렸어요.\n"
+                   "(회차·좌석 정보는 조회가 막혀 확인 못 함 — 지금 바로 예매 화면을 확인하세요)\n"
+                   "명당: H·I열 중앙(약 14~31번)")
         else:
             lines = [f'{s["time"]} {s["hall"]} (잔여 {s["seats"]})' for s in shows]
             notify(f"🚨 {MOVIE_LABEL} {label(ymd)} 예매 오픈!",
                    f"{SITE_NAME}\n" + "\n".join(lines) + "\n명당: H·I열 중앙(약 14~31번)")
         state["notified"][ymd] = datetime.now(KST).isoformat(timespec="seconds")
         save_state(state)
-    if CANCEL_WATCH:
+    if CANCEL_WATCH and not cancel_first:
         try:
             cancel_watch_tick()
         except HTTPBlocked:
-            log("취소표 확인은 이번 회차에 막힘 (다음 회차에 재시도)")
+            log("취소표 확인 막힘")
     if first_run:
         state["baseline_done"] = datetime.now(KST).isoformat(timespec="seconds")
         save_state(state)
         log("기준선 저장 완료. 이제부터 새로 열리는 날짜만 알립니다.")
     else:
-        log(f"확인 완료 (상영일 {len(dates)}일, 새 오픈 없음이면 조용히 대기)")
+        log(f"확인 완료 (오디세이 상영일 {len(dates)}일)")
     return False
 
 
