@@ -72,7 +72,7 @@ jobs:
           # 5분마다 최근 로그를 status 브랜치의 status-<slot>.txt 로 올림 (밖에서 상태 확인용)
           push_status() {
             { echo "slot $SLOT · run #$GITHUB_RUN_NUMBER · 갱신 $(TZ=Asia/Seoul date '+%m-%d %H:%M:%S') KST"; echo "성공 $(grep -c '확인 완료' watch.log) / 막힘 $(grep -c '이번 회차 막힘' watch.log)"; tail -n 12 watch.log; } > st.txt
-            sha=$(gh api "repos/$GITHUB_REPOSITORY/contents/status-$SLOT.txt?ref=status" --jq .sha 2>/dev/null)
+            sha=$(gh api "repos/$GITHUB_REPOSITORY/contents/status-$SLOT.txt?ref=status" --jq .sha 2>/dev/null) || sha=""
             gh api -X PUT "repos/$GITHUB_REPOSITORY/contents/status-$SLOT.txt" -f message="status $SLOT" -f branch=status -f content="$(base64 -w0 st.txt)" ${sha:+-f sha=$sha} >/dev/null 2>&1
           }
           : > watch.log
