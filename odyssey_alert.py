@@ -49,11 +49,15 @@ def log(msg):
 
 
 try:
-    # CGV(Cloudflare)는 TLS 지문으로 봇을 막음 → 크롬 TLS 지문 흉내 (pip install curl_cffi)
+    # CGV(Cloudflare)는 TLS/브라우저 지문으로 봇을 막음 → 브라우저 지문 흉내 (pip install curl_cffi)
     from curl_cffi import requests as _cffi
-    _session = _cffi.Session(impersonate="chrome")
 except ImportError:
-    _session = None
+    _cffi = None
+
+# 통과되는 지문은 CGV 쪽 규칙에 따라 바뀜(2026-10 기준 GitHub에서는 safari만 통과).
+# 막히면 다음 지문으로 넘어가고, 통과한 지문을 계속 씀.
+PROFILES = ["safari", "safari18_0", "chrome", "firefox", "safari18_0_ios", "chrome131_android"]
+_prof = {"i": 0, "session": None}
 
 
 class HTTPBlocked(Exception):
@@ -62,13 +66,38 @@ class HTTPBlocked(Exception):
         self.code = code
 
 
+def _new_session(name):
+    s = _cffi.Session(impersonate=name)
+    try:  # 홈을 먼저 열어 Cloudflare 쿠키(__cf_bm)를 받아둠
+        s.get("https://cgv.co.kr/", timeout=20)
+    except Exception:
+        pass
+    return s
+
+
 def get_json(path, params):
     url = f"{BASE}/{path}"
-    if _session is not None:
-        r = _session.get(url, params=params, headers={"Referer": HEADERS["Referer"]}, timeout=20)
-        if r.status_code != 200:
-            raise HTTPBlocked(r.status_code)
-        return r.json()
+    if _cffi is not None:
+        last = 0
+        for _ in range(len(PROFILES)):
+            name = PROFILES[_prof["i"] % len(PROFILES)]
+            if _prof["session"] is None:
+                _prof["session"] = _new_session(name)
+            try:
+                r = _prof["session"].get(url, params=params, headers={"Referer": HEADERS["Referer"]}, timeout=20)
+                last = r.status_code
+                if r.status_code == 200:
+                    return r.json()
+            except Exception as e:
+                last = 0
+                log(f"요청 오류({name}): {str(e)[:80]}")
+            if last == 429:
+                raise HTTPBlocked(429)
+            log(f"지문 {name} → HTTP {last}, 다음 지문으로 전환")
+            _prof["i"] += 1
+            _prof["session"] = None
+            time.sleep(2)
+        raise HTTPBlocked(last or 403)
     qs = "&".join(f"{k}={v}" for k, v in params.items())
     req = urllib.request.Request(f"{url}?{qs}", headers=HEADERS)
     try:

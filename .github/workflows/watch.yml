@@ -37,7 +37,7 @@ jobs:
         run: python3 odyssey_alert.py --test
       - name: curl_cffi 설치 (크롬 TLS 지문)
         if: ${{ !inputs.test }}
-        run: pip install -q curl_cffi
+        run: pip install -q -U curl_cffi
       - name: 약 5시간 40분 동안 60초 간격으로 확인
         id: watch
         if: ${{ !inputs.test }}
