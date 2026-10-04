@@ -59,7 +59,16 @@ except ImportError:
 #  - 한 번 통과한 연결은 계속 통과, 막힌 연결은 계속 막힘 → 막히면 새 연결로 다시 시도
 #  - chrome136, firefox 지문은 항상 막힘. 홈페이지를 먼저 여는 것은 도움 안 됨
 PROFILES = ["chrome", "safari", "safari18_0", "safari17_0"]
-MAX_TRIES = 4
+MAX_TRIES = 3
+MIN_GAP = 12          # CGV는 같은 IP의 연달은 요청을 막음(속도 제한) → 모든 요청 사이 최소 간격(초)
+_last_req = [0.0]
+
+
+def _throttle():
+    wait = _last_req[0] + MIN_GAP - time.time()
+    if wait > 0:
+        time.sleep(wait)
+    _last_req[0] = time.time()
 _prof = {"i": 0, "session": None, "name": None}
 
 
@@ -78,6 +87,7 @@ def get_json(path, params):
                 _prof["name"] = PROFILES[_prof["i"] % len(PROFILES)]
                 _prof["i"] += 1
                 _prof["session"] = _cffi.Session(impersonate=_prof["name"])
+            _throttle()
             try:
                 r = _prof["session"].get(url, params=params, headers={"Referer": HEADERS["Referer"]}, timeout=20)
                 last = r.status_code
@@ -92,7 +102,6 @@ def get_json(path, params):
             _prof["session"] = None      # 막힌 연결은 버림
             if last == 429:
                 raise HTTPBlocked(429)
-            time.sleep(4)
         log(f"연결 {MAX_TRIES}개 모두 막힘: {', '.join(tried)}")
         raise HTTPBlocked(last or 403)
     qs = "&".join(f"{k}={v}" for k, v in params.items())
@@ -104,13 +113,14 @@ def get_json(path, params):
         raise HTTPBlocked(e.code)
 
 
-def probe_runner(n=8, need=3):
-    """이 서버(IP)가 CGV에 얼마나 통과되는지 빠르게 측정. GitHub 서버마다 통과율이 크게 다름."""
+def probe_runner(n=5, need=2):
+    """이 서버(IP)가 CGV에 통과되는지 측정. 요청은 MIN_GAP 간격으로."""
     if _cffi is None:
         return True
     url = f"{BASE}/searchSiteScnscYmdListByMov"
     seq = ""
     for i in range(n):
+        _throttle()
         try:
             r = _cffi.Session(impersonate=PROFILES[i % 2]).get(
                 url, params={"coCd": "A420", "siteNo": SITE_NO, "movNo": MOV_NO or "30001323"},
@@ -120,7 +130,6 @@ def probe_runner(n=8, need=3):
             seq += "E"
         if seq.count("O") >= need:
             break
-        time.sleep(2)
     ok = seq.count("O") >= need
     log(f"서버 품질 측정: {seq} → {'좋은 서버, 감시 시작' if ok else '나쁜 서버, 교대'}")
     return ok
@@ -153,7 +162,6 @@ def cancel_watch_tick():
         return
     ymd = dates[_cancel_idx[0] % len(dates)]
     _cancel_idx[0] += 1
-    time.sleep(1.5)
     d = get_json("searchMovScnInfo", {"coCd": "A420", "siteNo": SITE_NO, "scnYmd": ymd, "rtctlScopCd": "01"})
     for r in d.get("data") or []:
         t = r.get("scnsrtTm") or ""
@@ -261,7 +269,6 @@ def check_once():
     for ymd in dates:
         if ymd in state["notified"] or time.time() < _recheck_after.get(ymd, 0):
             continue
-        time.sleep(1.5)
         shows = endgame_showings(ymd)
         if not shows:
             _recheck_after[ymd] = time.time() + RECHECK_SEC
@@ -322,7 +329,7 @@ def main():
             if len(recent) >= 5 and sum(recent) / len(recent) < 0.6:
                 log(f"최근 {len(recent)}회 중 {sum(recent)}회만 통과 → 서버가 나빠짐, 교대")
                 sys.exit(0)
-            time.sleep(max(30, a.loop) if ok else 20)
+            time.sleep(35 if ok else 15)   # 요청 간격(12초)과 합쳐 약 1분 주기
     else:
         try:
             check_once()
