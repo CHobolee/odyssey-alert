@@ -43,10 +43,20 @@ jobs:
         if: ${{ !inputs.test }}
         env:
           BLOCKED_STREAK: ${{ inputs.blocked || '0' }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set +e
-          python3 odyssey_alert.py --loop 60 --minutes 335
-          code=$?
+          # 10분마다 최근 로그를 status 브랜치의 status.txt 로 올림 (밖에서 상태 확인용)
+          push_status() {
+            { echo "run #$GITHUB_RUN_NUMBER  갱신 $(TZ=Asia/Seoul date '+%m-%d %H:%M:%S') KST"; echo "성공 $(grep -c '확인 완료' watch.log) / 막힘 $(grep -c '이번 회차 막힘' watch.log)"; tail -n 25 watch.log; } > status.txt
+            sha=$(gh api "repos/$GITHUB_REPOSITORY/contents/status.txt?ref=status" --jq .sha 2>/dev/null)
+            gh api -X PUT "repos/$GITHUB_REPOSITORY/contents/status.txt" -f message="status" -f branch=status -f content="$(base64 -w0 status.txt)" ${sha:+-f sha=$sha} >/dev/null 2>&1
+          }
+          ( while sleep 600; do push_status; done ) &
+          bg=$!
+          python3 -u odyssey_alert.py --loop 60 --minutes 335 2>&1 | tee watch.log
+          code=${PIPESTATUS[0]}
+          kill $bg 2>/dev/null; push_status
           if [ $code -eq 3 ]; then echo "blocked=$(( ${BLOCKED_STREAK:-0} + 1 ))" >> $GITHUB_OUTPUT; else echo "blocked=0" >> $GITHUB_OUTPUT; fi
           # 나쁜 서버만 30번 연속이면(약 30분) 한 번만 알림
           if [ $code -eq 3 ] && [ "${BLOCKED_STREAK:-0}" = "30" ] && [ -n "$NTFY_TOPIC" ]; then
