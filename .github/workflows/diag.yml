@@ -6,10 +6,10 @@ permissions:
 jobs:
   diag:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - run: pip install -q -U curl_cffi && python3 diag.py
+      - run: pip install -q -U curl_cffi playwright && python3 -m playwright install --with-deps chromium chrome >/dev/null 2>&1; python3 diag.py
       - run: |
           git config user.name "odyssey-alert"; git config user.email "actions@github.com"
           git add diag_*.txt && git commit -m "diag $(date -u +%H:%M)" && git pull --rebase && git push
