@@ -1,0 +1,23 @@
+runner_ip 64.236.201.17
+--- A. 다른 주소
+chrome  cgv.co.kr/api/v1/booking/searchSiteScnscYmdListByMov           -> 403 CGV차단
+safari  cgv.co.kr/api/v1/booking/searchSiteScnscYmdListByMov           -> 403 CGV차단
+chrome  www.cgv.co.kr/api/v1/booking/searchSiteScnscYmdListByMov       -> 403 CGV차단
+safari  www.cgv.co.kr/api/v1/booking/searchSiteScnscYmdListByMov       -> 403 CGV차단
+chrome  m.cgv.co.kr/api/v1/booking/searchSiteScnscYmdListByMov         -> 403 CGV차단
+safari  m.cgv.co.kr/api/v1/booking/searchSiteScnscYmdListByMov         -> 403 CGV차단
+chrome  api.cgv.co.kr/cnm/atkt/searchSiteScnscYmdListByMov             -> 403 CGV차단
+safari  api.cgv.co.kr/cnm/atkt/searchSiteScnscYmdListByMov             -> 403 CGV차단
+chrome  api.cgv.co.kr/cnm/booking/searchSiteScnscYmdListByMov          -> 403 CGV차단
+safari  api.cgv.co.kr/cnm/booking/searchSiteScnscYmdListByMov          -> 403 CGV차단
+chrome  api.cgv.co.kr/api/v1/booking/searchSiteScnscYmdListByMov       -> 403 CGV차단
+safari  api.cgv.co.kr/api/v1/booking/searchSiteScnscYmdListByMov       -> 401 JSON
+chrome  api.cgv.co.kr/com/bznsCom/screnMng/checkScrenUrlValid          -> 403 CGV차단
+safari  api.cgv.co.kr/com/bznsCom/screnMng/checkScrenUrlValid          -> 200 <ApiResult><statusCode>0</statusCode><statusMessag
+--- B. curl_cffi 새 연결 통과율 (8초 간격)
+chrome/safari 번갈아: xOxOOOOOOOOOOOxOxOOOOOxO  통과 19/24
+--- C. Playwright 실제 Chromium
+headless: 페이지 200 title='깊이 빠져 보다, CGV'
+headless: 페이지 안에서 API 12회 → OOOOOOOOOOOO  통과 12/12
+headless+chrome채널: 페이지 200 title='깊이 빠져 보다, CGV'
+headless+chrome채널: 페이지 안에서 API 12회 → OOOOOOOOOOOO  통과 12/12
