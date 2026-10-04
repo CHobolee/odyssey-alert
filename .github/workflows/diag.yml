@@ -12,4 +12,4 @@ jobs:
       - run: pip install -q -U curl_cffi && python3 diag.py
       - run: |
           git config user.name "odyssey-alert"; git config user.email "actions@github.com"
-          git add diag.txt && git commit -m "diag $(date -u +%H:%M)" && git pull --rebase && git push
+          git add diag_*.txt && git commit -m "diag $(date -u +%H:%M)" && git pull --rebase && git push
