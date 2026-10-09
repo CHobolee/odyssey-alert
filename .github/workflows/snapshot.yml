@@ -1,0 +1,15 @@
+name: snapshot
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  snap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install -q playwright && python3 -m playwright install --with-deps chromium >/dev/null 2>&1; python3 snapshot.py
+      - run: |
+          git config user.name "odyssey-alert"; git config user.email "actions@github.com"
+          git add snapshot_*.txt && git commit -m "snapshot" && git pull --rebase && git push || true
